@@ -1,0 +1,43 @@
+services:
+  # ===== PostgreSQL Database =====
+  db:
+    image: postgres:17-alpine
+    container_name: maintenance-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: smart_maintenance
+    ports:
+      - "6433:5432"
+    volumes:
+      - maintenance_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d smart_maintenance" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===== Next.js Application =====
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maintenance-app
+    restart: unless-stopped
+    ports:
+      - "6301:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:123456@db:5432/smart_maintenance?schema=public
+      NEXTAUTH_URL: http://localhost:6301
+      AUTH_SECRET: mcNBbQZZrWtvHoYEVf7jKKQ8a3ZJ2VzYvaMydItlTr0= # Added by `npx auth`. Read more: https://cli.authjs.dev
+      GITHUB_ID: Ov23libupqcOrux0EKVi # Added by `npx auth`. Read more: https://cli.authjs.dev
+      GITHUB_SECRET: 1d45dd53d29990ed9c3d8a27d1e3a6e533f67118 # Added by `npx auth`. Read more: https://cli.authjs.dev
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  maintenance_pgdata:
+    driver: local
