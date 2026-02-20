@@ -1,4 +1,10 @@
-// prisma/schema.prisma
+// ============================================================
+// Prisma Schema: BTS Maintenance Report System
+// Architecture: Hybrid 2-Layer
+//   Layer 1 — Relational : Header, Status, Approval, Summary
+//   Layer 2 — JSONB      : Dynamic Checklist, Device Matrix, LED Grid
+// ============================================================
+
 generator client {
   provider = "prisma-client"
   output   = "../lib/generated/prisma"
@@ -8,20 +14,31 @@ datasource db {
   provider = "postgresql"
 }
 
+// ========================================
+// Section 1: User Authentication (Auth.js)
+// ========================================
+
+// ตารางผู้ใช้งานระบบ
 model User {
   id            String    @id @default(cuid())
   name          String?
   email         String?   @unique
   emailVerified DateTime?
   image         String?
-  password      String?   // สำหรับ Credentials Login
-  role          String    @default("user")  // สำหรับ RBAC
+  password      String? // สำหรับ Credentials Login
+  role          String    @default("user") // สำหรับ RBAC
   accounts      Account[]
   sessions      Session[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // PM Relations
+  reportsAsLeader  MaintenanceReport[] @relation("ReportLeader")
+  reportsAsApostle MaintenanceReport[] @relation("ReportApostle")
+  approvals        ApprovalLog[]
 }
 
+// ตารางบัญชีผู้ใช้ (สำหรับ Social Login)
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -40,6 +57,7 @@ model Account {
   @@unique([provider, providerAccountId])
 }
 
+// ตาราง Session (สำหรับเก็บข้อมูลการ Login)
 model Session {
   id           String   @id @default(cuid())
   sessionToken String   @unique
@@ -48,6 +66,7 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// ตาราง Token (สำหรับยืนยันตัวตน)
 model VerificationToken {
   identifier String
   token      String   @unique
@@ -56,15 +75,16 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// Section 8: Maintenance Job Order
+// ========================================
+// Section 2: Corrective Maintenance (CM)
 // ========================================
 
 // สถานะงานซ่อม
 enum JobStatus {
-  PENDING     // รอตรวจสอบ
+  PENDING // รอตรวจสอบ
   IN_PROGRESS // กำลังซ่อม
-  COMPLETED   // ซ่อมเสร็จแล้ว
-  CANCELLED   // ยกเลิก
+  COMPLETED // ซ่อมเสร็จแล้ว
+  CANCELLED // ยกเลิก
 }
 
 // ระดับความเร่งด่วน
@@ -77,20 +97,20 @@ enum Priority {
 
 // ตารางบันทึกงานซ่อม
 model MaintenanceLog {
-  id          Int      @id @default(autoincrement())
-  jobNo       String   @unique // เช่น JOB-202402-001
+  id    Int    @id @default(autoincrement())
+  jobNo String @unique // เช่น JOB-202402-001
 
-  // สถานที่เกิดเหตุ
-  location    String   // เช่น "Station Siam (CEN)" หรือ "Train No. 104"
+  // สถานที่เกิดเหตุ (อาจจะเป็นสถานี หรือ ขบวนรถ)
+  location String // เช่น "Station Siam (CEN)" หรือ "Train No. 104"
 
   // รายละเอียดปัญหา
-  subject     String   // หัวข้อแจ้งซ่อม
-  description String   // รายละเอียด
-  reportedBy  String   // ชื่อผู้แจ้ง (Employee ID)
+  subject     String // หัวข้อแจ้งซ่อม เช่น "แอร์ไม่เย็น ตู้ 2"
+  description String // รายละเอียด
+  reportedBy  String // ชื่อผู้แจ้ง (Employee ID)
 
   // การดำเนินงาน
-  status      JobStatus @default(PENDING)
-  priority    Priority  @default(MEDIUM)
+  status   JobStatus @default(PENDING)
+  priority Priority  @default(MEDIUM)
 
   // เวลา
   createdAt   DateTime  @default(now())
@@ -98,5 +118,205 @@ model MaintenanceLog {
   completedAt DateTime?
 
   // รูปภาพประกอบ (เก็บ URL)
-  photoUrl    String?
+  photoUrl String?
+}
+
+// ============================================================
+// Section 3: Preventive Maintenance (PM) — Hybrid 2-Layer
+// ============================================================
+
+enum ReportStatus {
+  DRAFT // กำลังกรอก
+  SUBMITTED // ส่งงานแล้ว รอ Approve
+  APPROVED // อนุมัติแล้ว
+  REJECTED // ส่งกลับแก้ไข
+}
+
+enum ApprovalAction {
+  APPROVED
+  REJECTED
+}
+
+enum AccessStatus {
+  ENTRY
+  EXIT
+}
+
+enum BorrowStatus {
+  BORROWED
+  RETURNED
+}
+
+enum PmCycle {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  BIANNUAL
+  YEARLY
+}
+
+// ──────────────────────────────────────────────────────────
+// MODEL: JobTemplate
+// Master data ของแต่ละประเภทงาน
+// เช่น "PM_Y1_POINT_MACHINE", "PM_M3_MOXA_TAP", "PM_M2_EMP"
+// เก็บ JSON Schema ของ checklistData ไว้ validate ฝั่ง App
+// ──────────────────────────────────────────────────────────
+model JobTemplate {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// รหัสเอกสาร เช่น "PM_Y1_POINT_MACHINE"
+  code String @unique
+
+  /// ชื่อแสดงผล เช่น "PM (Y1) Point Machine"
+  name String
+
+  /// ชนิดอุปกรณ์ เช่น "POINT_MACHINE", "MOXA_TAP", "EMP"
+  equipmentType String
+
+  /// รอบ PM
+  pmCycle PmCycle
+
+  /// ชื่อรอบ เช่น "Y1", "M3", "M2"
+  cycleLabel String
+
+  /// ระยะเวลา (วัน) เช่น 365, 90, 60
+  intervalDays Int
+
+  /// หมายเลขฟอร์ม เช่น "FM-MTD-M51000-Z-021"
+  formNumber String?
+
+  /// เวอร์ชั่น เช่น "Rev.00"
+  formRevision String?
+
+  /// JSON Schema สำหรับ validate checklistData (Layer 2)
+  checklistSchema Json?
+
+  /// Default structure ของ checklistData (template เปล่า)
+  checklistTemplate Json?
+
+  isActive Boolean @default(true)
+
+  // Relations
+  reports MaintenanceReport[]
+
+  @@index([equipmentType])
+  @@index([pmCycle])
+}
+
+// ──────────────────────────────────────────────────────────
+// MODEL: MaintenanceReport
+// Layer 1: ข้อมูลที่ Query/Filter/Report ได้โดยตรง
+// Layer 2: checklistData (JSONB) — Dynamic per equipment
+// ──────────────────────────────────────────────────────────
+model MaintenanceReport {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ── FK ───────────────────────────────────────────────────
+  jobTemplateId String
+  leaderId      String?
+  apostleId     String?
+
+  // ── [L1] Header — ค้นหาและ Filter ได้ทันที ──────────────
+  workOrderNo      String
+  workOrderNo2     String? // กรณีมีหลาย WO เช่น EMP E22+E23
+  reportDate       DateTime
+  reportTimeStart  String
+  reportTimeEnd    String?
+  stationName      String
+  locationArea     String
+  leaderName       String // เก็บชื่อไว้ด้วยเผื่อ User ถูกลบ
+  apostleName      String
+  coordinatePerson String
+  tprNo            String?
+  teamNameList     String?
+  workDescription  String?
+
+  // ── [L1] Equipment Summary — Query ได้ว่ามีกี่ตัว ────────
+  equipmentCount Int      @default(0)
+  equipmentCodes String[]
+  stationCodes   String[]
+
+  // ── [L1] Access & Equipment Borrow ───────────────────────
+  stationAccessStatus  AccessStatus?
+  ccrAccessStatus      AccessStatus?
+  hasEarthingDevice    Boolean?
+  earthingDeviceStatus BorrowStatus?
+  hasVoltageTester     Boolean?
+  voltageTesterStatus  BorrowStatus?
+
+  // ── [L1] Status & Approval ───────────────────────────────
+  status      ReportStatus @default(DRAFT)
+  submittedAt DateTime?
+  approvedAt  DateTime?
+
+  // ── [L1] Summary — ใช้แสดง Dashboard ────────────────────
+  totalCheckItems   Int     @default(0)
+  passCount         Int     @default(0)
+  failCount         Int     @default(0)
+  hasIssues         Boolean @default(false)
+  additionalRemarks String?
+
+  // ── [L2] JSONB Payload ────────────────────────────────────
+  checklistData Json @default("{}")
+
+  // ── Relations ─────────────────────────────────────────────
+  jobTemplate  JobTemplate   @relation(fields: [jobTemplateId], references: [id])
+  leader       User?         @relation("ReportLeader", fields: [leaderId], references: [id])
+  apostle      User?         @relation("ReportApostle", fields: [apostleId], references: [id])
+  approvalLogs ApprovalLog[]
+  images       ReportImage[]
+
+  @@index([jobTemplateId])
+  @@index([reportDate])
+  @@index([stationName])
+  @@index([status])
+  @@index([hasIssues])
+  @@index([workOrderNo])
+  @@index([equipmentCodes])
+}
+
+// ──────────────────────────────────────────────────────────
+// MODEL: ApprovalLog
+// ──────────────────────────────────────────────────────────
+model ApprovalLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  reportId   String
+  approverId String
+
+  action  ApprovalAction
+  comment String?
+
+  previousStatus ReportStatus
+  newStatus      ReportStatus
+
+  report   MaintenanceReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  approver User              @relation(fields: [approverId], references: [id])
+
+  @@index([reportId])
+  @@index([approverId])
+}
+
+// ──────────────────────────────────────────────────────────
+// MODEL: ReportImage
+// ──────────────────────────────────────────────────────────
+model ReportImage {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  reportId String
+
+  imageUrl  String
+  caption   String?
+  sortOrder Int     @default(0)
+
+  report MaintenanceReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
 }

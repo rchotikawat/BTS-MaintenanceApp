@@ -34,6 +34,7 @@ services:
       GITHUB_ID: Ov23libupqcOrux0EKVi # Added by `npx auth`. Read more: https://cli.authjs.dev
       GITHUB_SECRET: 1d45dd53d29990ed9c3d8a27d1e3a6e533f67118 # Added by `npx auth`. Read more: https://cli.authjs.dev
       NODE_ENV: production
+      ALLOW_REGISTRATION: "true"
     depends_on:
       db:
         condition: service_healthy

@@ -10,6 +10,7 @@ export default async function MainLayout({
     children: React.ReactNode
 }) {
     const session = await getServerSession(authOptions)
+    const userRole = (session?.user as { role?: string })?.role
 
     // ถ้าไม่ได้ Login → Redirect ไปหน้า Login
     if (!session) {
@@ -40,7 +41,11 @@ export default async function MainLayout({
                             {/* Navigation */}
                             <nav className="flex items-center gap-1">
                                 <NavLink href="/dashboard" icon="📊">Dashboard</NavLink>
-                                <NavLink href="/jobs" icon="🔧">งานซ่อม</NavLink>
+                                <NavLink href="/jobs" icon="🔧">งานซ่อม (CM)</NavLink>
+                                <NavLink href="/pm" icon="📋">งานตรวจเช็ค (PM)</NavLink>
+                                {userRole === "admin" && (
+                                    <NavLink href="/admin/users" icon="👥">จัดการผู้ใช้</NavLink>
+                                )}
                             </nav>
                         </div>
 
